@@ -1,0 +1,232 @@
+// DevLearn Database Schema
+// Step 4 Foundation — Learning Domain & Relational Database Architecture
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// User entity representing platform learners, instructors, and administrators.
+model User {
+  id           String           @id @default(uuid())
+  email        String           @unique
+  passwordHash String           @map("password_hash")
+  fullName     String           @map("full_name")
+  role         String           @default("LEARNER") // LEARNER, INSTRUCTOR, ADMIN
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+  sessions     Session[]
+  enrollments  Enrollment[]
+  progress     LessonProgress[]
+  quizAttempts QuizAttempt[]
+
+  @@map("users")
+}
+
+/// Server-controlled session entity enforcing one active authenticated login per account.
+model Session {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  refreshTokenHash String    @map("refresh_token_hash")
+  deviceInfo       String?   @map("device_info")
+  ipAddress        String?   @map("ip_address")
+  isActive         Boolean   @default(true) @map("is_active")
+  expiresAt        DateTime  @map("expires_at")
+  revokedAt        DateTime? @map("revoked_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@map("sessions")
+}
+
+/// Foundation operational check model to verify database read/write connectivity.
+model SystemHealth {
+  id        String   @id @default(uuid())
+  service   String   @default("devlearn-backend")
+  status    String   @default("ok")
+  checkedAt DateTime @default(now()) @map("checked_at")
+
+  @@map("system_health")
+}
+
+// ==========================================
+// LEARNING DOMAIN MODELS
+// ==========================================
+
+/// Course entity representing an educational product (e.g. Git, SQL, React).
+model Course {
+  id               String       @id @default(uuid())
+  slug             String       @unique
+  title            String
+  summary          String?
+  description      String?
+  thumbnailUrl     String?      @map("thumbnail_url")
+  level            String       @default("BEGINNER") // BEGINNER, INTERMEDIATE, ADVANCED
+  status           String       @default("PUBLISHED") // DRAFT, PUBLISHED, ARCHIVED
+  isFree           Boolean      @default(true) @map("is_free")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  modules          Module[]
+  enrollments      Enrollment[]
+
+  @@index([status])
+  @@map("courses")
+}
+
+/// Module entity grouping ordered lessons within a course.
+model Module {
+  id          String   @id @default(uuid())
+  courseId    String   @map("course_id")
+  title       String
+  description String?
+  orderIndex  Int      @map("order_index")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  course      Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons     Lesson[]
+
+  @@unique([courseId, orderIndex])
+  @@map("modules")
+}
+
+/// Lesson entity containing educational material and optional assessment.
+model Lesson {
+  id               String           @id @default(uuid())
+  moduleId         String           @map("module_id")
+  slug             String
+  title            String
+  description      String?
+  orderIndex       Int              @map("order_index")
+  isPreview        Boolean          @default(false) @map("is_preview")
+  estimatedMinutes Int?             @map("estimated_minutes")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  module           Module           @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  contents         LessonContent[]
+  quiz             Quiz?
+  progress         LessonProgress[]
+
+  @@unique([moduleId, orderIndex])
+  @@map("lessons")
+}
+
+/// Structured content block within a lesson (HEADING, TEXT, CODE, CALLOUT, LIST, IMAGE, LINK).
+/// Stored strictly as platform-agnostic data for Web and Flutter client consumption.
+model LessonContent {
+  id           String   @id @default(uuid())
+  lessonId     String   @map("lesson_id")
+  contentType  String   @map("content_type") // HEADING, TEXT, CODE, CALLOUT, LIST, IMAGE, LINK
+  orderIndex   Int      @map("order_index")
+  body         String   @db.Text
+  codeLanguage String?  @map("code_language") // e.g. javascript, typescript, sql, bash
+  metadata     String?  @db.Text // JSON string for optional attributes (callout variant, alt text, etc.)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  lesson       Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([lessonId, orderIndex])
+  @@map("lesson_contents")
+}
+
+/// Quiz assessment attached to a lesson.
+model Quiz {
+  id           String         @id @default(uuid())
+  lessonId     String?        @unique @map("lesson_id")
+  title        String
+  description  String?
+  passingScore Int            @default(70) @map("passing_score") // Passing percentage threshold (0-100)
+  createdAt    DateTime       @default(now()) @map("created_at")
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  lesson       Lesson?        @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  questions    QuizQuestion[]
+  attempts     QuizAttempt[]
+
+  @@map("quizzes")
+}
+
+/// Question belonging to a quiz.
+model QuizQuestion {
+  id          String       @id @default(uuid())
+  quizId      String       @map("quiz_id")
+  text        String
+  type        String       @default("MULTIPLE_CHOICE") // MULTIPLE_CHOICE
+  orderIndex  Int          @map("order_index")
+  explanation String?      @db.Text // Returned only after grading
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  quiz        Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  options     QuizOption[]
+
+  @@unique([quizId, orderIndex])
+  @@map("quiz_questions")
+}
+
+/// Answer option for a quiz question.
+/// Note: isCorrect is PRIVATE and strictly omitted from learner-facing quiz payloads.
+model QuizOption {
+  id         String       @id @default(uuid())
+  questionId String       @map("question_id")
+  text       String
+  isCorrect  Boolean      @default(false) @map("is_correct")
+  orderIndex Int          @map("order_index")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+  question   QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, orderIndex])
+  @@map("quiz_options")
+}
+
+/// Record of a learner's quiz attempt and server-calculated score.
+model QuizAttempt {
+  id             String   @id @default(uuid())
+  userId         String   @map("user_id")
+  quizId         String   @map("quiz_id")
+  score          Int // Score percentage (0-100)
+  passed         Boolean
+  answersPayload String   @map("answers_payload") @db.Text // JSON string of submitted answers
+  createdAt      DateTime @default(now()) @map("created_at")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  quiz           Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  @@index([userId, quizId])
+  @@map("quiz_attempts")
+}
+
+/// Individual lesson completion tracker per learner.
+model LessonProgress {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  lessonId    String    @map("lesson_id")
+  completed   Boolean   @default(false)
+  completedAt DateTime? @map("completed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson      Lesson    @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@index([userId])
+  @@map("lesson_progress")
+}
+
+/// Course enrollment / entitlement record for learners.
+model Enrollment {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  courseId  String   @map("course_id")
+  status    String   @default("ACTIVE") // ACTIVE, COMPLETED
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course    Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId])
+  @@map("enrollments")
+}

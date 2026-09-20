@@ -161,8 +161,12 @@ Health endpoint: `http://localhost:4000/api/v1/health`.
 - `pnpm build`: Compile TypeScript to `dist/`
 - `pnpm start`: Launch compiled production server
 - `pnpm typecheck`: Run TypeScript compiler verification (`tsc --noEmit`)
+- `pnpm prisma:generate`: Generate Prisma Client types
+- `pnpm prisma:migrate`: Run PostgreSQL database migrations
+- `pnpm prisma:validate`: Validate Prisma schema file
+- `pnpm prisma:studio`: Open interactive Prisma Studio GUI
 
-> **Note**: Database connection (PostgreSQL/Prisma), authentication engines, and quiz grading tests are deferred to Step 2.
+> **Note**: Database foundation (PostgreSQL + Prisma) is established in Step 2. Complete domain models, authentication engines, and quiz grading tests are deferred to subsequent steps.
 
 ---
 
