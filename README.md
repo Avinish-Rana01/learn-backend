@@ -134,8 +134,8 @@ learn-backend/
 ## 🚀 6. Getting Started
 
 ### Prerequisites
-- **Node.js**: v20.0.0 or higher
-- **PostgreSQL**: (Optional) Standard PostgreSQL or use the built-in embedded PostgreSQL.
+- **Node.js**: v22.0.0 or higher (Node 22 LTS recommended)
+- **pnpm**: v10.0.0 or higher
 
 ### Installation & Setup
 ```bash
@@ -144,26 +144,25 @@ git clone https://github.com/Avinish-Rana01/learn-backend.git
 cd learn-backend
 
 # 2. Install dependencies
-npm install
+pnpm install
 
 # 3. Configure environment
 cp .env.example .env
 
-# 4. Run database migrations & seed starter developer courses
-npm run db:migrate
-npm run db:seed
-
-# 5. Start development server
-npm run dev
+# 4. Start development server
+pnpm dev
 ```
 
-The API will be running at `http://localhost:4000/api/v1`.
+The API service runs at `http://localhost:4000`.  
+Health endpoint: `http://localhost:4000/api/v1/health`.
 
-### Running Tests
-```bash
-# Execute Vitest automated test suite
-npm run test
-```
+### Available Scripts
+- `pnpm dev`: Start local development server with TypeScript watch mode (`tsx`)
+- `pnpm build`: Compile TypeScript to `dist/`
+- `pnpm start`: Launch compiled production server
+- `pnpm typecheck`: Run TypeScript compiler verification (`tsc --noEmit`)
+
+> **Note**: Database connection (PostgreSQL/Prisma), authentication engines, and quiz grading tests are deferred to Step 2.
 
 ---
 

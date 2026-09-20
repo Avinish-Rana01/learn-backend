@@ -11,10 +11,13 @@ node_modules/
 dist/
 coverage/
 
+# TypeScript build info
+*.tsbuildinfo
+
 # Environment
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
 
 # Database local storage & SQLite
 data/
