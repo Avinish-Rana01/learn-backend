@@ -5,7 +5,7 @@ export class CourseService {
   /**
    * List all published courses with module and lesson counts.
    */
-  static async listPublishedCourses() {
+  static async listPublishedCourses(userId?: string) {
     const courses = await prisma.course.findMany({
       where: { status: 'PUBLISHED' },
       include: {
@@ -19,6 +19,15 @@ export class CourseService {
       },
       orderBy: { createdAt: 'desc' },
     });
+
+    let enrolledCourseIds = new Set<string>();
+    if (userId) {
+      const enrollments = await prisma.enrollment.findMany({
+        where: { userId, status: 'ACTIVE' },
+        select: { courseId: true },
+      });
+      enrolledCourseIds = new Set(enrollments.map((e) => e.courseId));
+    }
 
     return courses.map((course) => {
       const totalLessons = course.modules.reduce((sum, mod) => sum + mod.lessons.length, 0);
@@ -34,6 +43,7 @@ export class CourseService {
         isFree: course.isFree,
         moduleCount: course.modules.length,
         lessonCount: totalLessons,
+        isEnrolled: enrolledCourseIds.has(course.id),
         createdAt: course.createdAt,
       };
     });
@@ -42,7 +52,7 @@ export class CourseService {
   /**
    * Fetch full course syllabus and curriculum by slug.
    */
-  static async getCourseBySlug(slug: string) {
+  static async getCourseBySlug(slug: string, userId?: string) {
     const course = await prisma.course.findUnique({
       where: { slug },
       include: {
@@ -70,7 +80,15 @@ export class CourseService {
       throw new AppError('Course not found.', 404, 'COURSE_NOT_FOUND');
     }
 
-    return course;
+    let isEnrolled = false;
+    if (userId) {
+      isEnrolled = await this.isEnrolled(userId, course.id);
+    }
+
+    return {
+      ...course,
+      isEnrolled,
+    };
   }
 
   /**

@@ -56,9 +56,9 @@ function optionalAuth(req: Request, _res: Response, next: NextFunction) {
  * GET /api/v1/courses
  * List published developer courses.
  */
-router.get('/courses', async (_req: Request, res: Response, next: NextFunction) => {
+router.get('/courses', optionalAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const courses = await CourseService.listPublishedCourses();
+    const courses = await CourseService.listPublishedCourses(req.user?.id);
     res.status(200).json({
       success: true,
       data: { courses },
@@ -72,9 +72,9 @@ router.get('/courses', async (_req: Request, res: Response, next: NextFunction) 
  * GET /api/v1/courses/:slug
  * Fetch course details, syllabus, and module hierarchy.
  */
-router.get('/courses/:slug', async (req: Request, res: Response, next: NextFunction) => {
+router.get('/courses/:slug', optionalAuth, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const course = await CourseService.getCourseBySlug(req.params.slug);
+    const course = await CourseService.getCourseBySlug(req.params.slug, req.user?.id);
     res.status(200).json({
       success: true,
       data: { course },
@@ -167,27 +167,37 @@ router.post(
 
 /**
  * POST /api/v1/progress/lessons/:lessonId
+ * POST /api/v1/lessons/:lessonId/progress
  * Mark lesson as completed or incomplete.
  */
+const handleLessonProgress = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const progress = await ProgressService.markLessonProgress(
+      req.user!.id,
+      req.params.lessonId,
+      req.body.completed
+    );
+    res.status(200).json({
+      success: true,
+      data: { progress },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 router.post(
   '/progress/lessons/:lessonId',
   requireAuth,
   validate(progressSchema),
-  async (req: Request, res: Response, next: NextFunction) => {
-    try {
-      const progress = await ProgressService.markLessonProgress(
-        req.user!.id,
-        req.params.lessonId,
-        req.body.completed
-      );
-      res.status(200).json({
-        success: true,
-        data: { progress },
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
+  handleLessonProgress
+);
+
+router.post(
+  '/lessons/:lessonId/progress',
+  requireAuth,
+  validate(progressSchema),
+  handleLessonProgress
 );
 
 /**

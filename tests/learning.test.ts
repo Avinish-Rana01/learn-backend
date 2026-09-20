@@ -149,6 +149,19 @@ vi.mock('../src/lib/prisma.js', () => ({
         return { ...course, modules };
       }),
     },
+    module: {
+      findMany: vi.fn(async ({ where }: { where: { courseId: string } }) => {
+        return db.modules
+          .filter((m) => m.courseId === where.courseId)
+          .sort((a, b) => a.orderIndex - b.orderIndex)
+          .map((mod) => {
+            const lessons = db.lessons
+              .filter((l) => l.moduleId === mod.id)
+              .sort((a, b) => a.orderIndex - b.orderIndex);
+            return { ...mod, lessons };
+          });
+      }),
+    },
     lesson: {
       findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
         const lesson = db.lessons.find((l) => l.id === where.id);
@@ -231,6 +244,16 @@ vi.mock('../src/lib/prisma.js', () => ({
         };
         db.enrollments.push(newEnrollment);
         return newEnrollment;
+      }),
+      findMany: vi.fn(async ({ where }: { where?: { userId?: string; status?: string } } = {}) => {
+        let list = db.enrollments;
+        if (where?.userId) {
+          list = list.filter((e) => e.userId === where.userId);
+        }
+        if (where?.status) {
+          list = list.filter((e) => e.status === where.status);
+        }
+        return list;
       }),
     },
     lessonProgress: {
@@ -320,13 +343,22 @@ describe('Learning Domain & Database Architecture', () => {
       }
     );
 
-    db.modules.push({
-      id: 'm-1',
-      courseId: 'c-1',
-      title: 'Module 1: Basics',
-      description: 'Basics of Git',
-      orderIndex: 1,
-    });
+    db.modules.push(
+      {
+        id: 'm-1',
+        courseId: 'c-1',
+        title: 'Module 1: Basics',
+        description: 'Basics of Git',
+        orderIndex: 1,
+      },
+      {
+        id: 'm-2',
+        courseId: 'c-1',
+        title: 'Module 2: Advanced',
+        description: 'Advanced Git Workflows',
+        orderIndex: 2,
+      }
+    );
 
     db.lessons.push(
       {
@@ -348,6 +380,16 @@ describe('Learning Domain & Database Architecture', () => {
         orderIndex: 2,
         isPreview: false,
         estimatedMinutes: 10,
+      },
+      {
+        id: 'l-3',
+        moduleId: 'm-2',
+        slug: 'git-rebase',
+        title: 'Git Rebase Lesson',
+        description: 'Rebasing workflows',
+        orderIndex: 1,
+        isPreview: false,
+        estimatedMinutes: 12,
       }
     );
 
@@ -400,22 +442,47 @@ describe('Learning Domain & Database Architecture', () => {
       const courses = await CourseService.listPublishedCourses();
       expect(courses).toHaveLength(1);
       expect(courses[0].slug).toBe('git-course');
-      expect(courses[0].lessonCount).toBe(2);
-      expect(courses[0].moduleCount).toBe(1);
+      expect(courses[0].lessonCount).toBe(3);
+      expect(courses[0].moduleCount).toBe(2);
     });
 
     it('retrieves course syllabus with ordered modules and lessons by slug', async () => {
       const course = await CourseService.getCourseBySlug('git-course');
       expect(course.title).toBe('Git Complete');
-      expect(course.modules).toHaveLength(1);
+      expect(course.modules).toHaveLength(2);
       expect(course.modules[0].lessons).toHaveLength(2);
       expect(course.modules[0].lessons[0].orderIndex).toBe(1);
       expect(course.modules[0].lessons[1].orderIndex).toBe(2);
+      expect(course.modules[1].lessons).toHaveLength(1);
+      expect(course.modules[1].lessons[0].orderIndex).toBe(1);
     });
 
     it('throws 404 for draft or non-existent course slug', async () => {
       await expect(CourseService.getCourseBySlug('draft-course')).rejects.toThrow(AppError);
       await expect(CourseService.getCourseBySlug('unknown-slug')).rejects.toThrow(AppError);
+    });
+
+    it('returns authoritative isEnrolled flag for authenticated users', async () => {
+      // Guest access returns isEnrolled: false
+      const guestCourses = await CourseService.listPublishedCourses();
+      expect(guestCourses[0].isEnrolled).toBe(false);
+
+      const guestCourse = await CourseService.getCourseBySlug('git-course');
+      expect(guestCourse.isEnrolled).toBe(false);
+
+      // Enroll user
+      await CourseService.enrollUser('user-1', 'c-1');
+
+      // Authenticated enrolled user
+      const enrolledCourses = await CourseService.listPublishedCourses('user-1');
+      expect(enrolledCourses[0].isEnrolled).toBe(true);
+
+      const enrolledCourse = await CourseService.getCourseBySlug('git-course', 'user-1');
+      expect(enrolledCourse.isEnrolled).toBe(true);
+
+      // Other user is not enrolled
+      const otherCourses = await CourseService.listPublishedCourses('user-2');
+      expect(otherCourses[0].isEnrolled).toBe(false);
     });
   });
 
@@ -450,6 +517,36 @@ describe('Learning Domain & Database Architecture', () => {
       // Enrolled user succeeds
       const enrolledLesson = await LessonService.getLessonById('l-2', 'user-guest');
       expect(enrolledLesson.id).toBe('l-2');
+    });
+
+    it('computes canonical navigation across module boundaries', async () => {
+      // First lesson boundary (l-1)
+      const first = await LessonService.getLessonById('l-1');
+      expect(first.navigation.previousLesson).toBeNull();
+      expect(first.navigation.nextLesson?.id).toBe('l-2');
+
+      // Cross-module transition (l-2 is last of m-1 -> next is l-3 in m-2)
+      const middle = await LessonService.getLessonById('l-2');
+      expect(middle.navigation.previousLesson?.id).toBe('l-1');
+      expect(middle.navigation.nextLesson?.id).toBe('l-3');
+
+      // Last lesson boundary (l-3)
+      const last = await LessonService.getLessonById('l-3');
+      expect(last.navigation.previousLesson?.id).toBe('l-2');
+      expect(last.navigation.nextLesson).toBeNull();
+    });
+
+    it('returns lesson completion status and syllabus outline for authenticated user', async () => {
+      const lessonBefore = await LessonService.getLessonById('l-1', 'user-1');
+      expect(lessonBefore.isCompleted).toBe(false);
+
+      // Mark lesson l-1 complete
+      await ProgressService.markLessonProgress('user-1', 'l-1', true);
+
+      const lessonAfter = await LessonService.getLessonById('l-1', 'user-1');
+      expect(lessonAfter.isCompleted).toBe(true);
+      expect(lessonAfter.syllabus[0].lessons[0].isCompleted).toBe(true);
+      expect(lessonAfter.syllabus[0].lessons[1].isCompleted).toBe(false);
     });
   });
 
@@ -512,22 +609,28 @@ describe('Learning Domain & Database Architecture', () => {
     });
 
     it('dynamically calculates course progress percentage', async () => {
-      // 0 of 2 completed
+      // 0 of 3 completed
       const initialProgress = await ProgressService.getCourseProgress('user-1', 'c-1');
-      expect(initialProgress.totalLessons).toBe(2);
+      expect(initialProgress.totalLessons).toBe(3);
       expect(initialProgress.completedLessons).toBe(0);
       expect(initialProgress.percentage).toBe(0);
 
-      // Complete 1 of 2 lessons
+      // Complete 1 of 3 lessons (33%)
       await ProgressService.markLessonProgress('user-1', 'l-1', true);
-      const halfProgress = await ProgressService.getCourseProgress('user-1', 'c-1');
-      expect(halfProgress.completedLessons).toBe(1);
-      expect(halfProgress.percentage).toBe(50);
+      const thirdProgress = await ProgressService.getCourseProgress('user-1', 'c-1');
+      expect(thirdProgress.completedLessons).toBe(1);
+      expect(thirdProgress.percentage).toBe(33);
 
-      // Complete 2 of 2 lessons
+      // Complete 2 of 3 lessons (67%)
       await ProgressService.markLessonProgress('user-1', 'l-2', true);
+      const twoThirdsProgress = await ProgressService.getCourseProgress('user-1', 'c-1');
+      expect(twoThirdsProgress.completedLessons).toBe(2);
+      expect(twoThirdsProgress.percentage).toBe(67);
+
+      // Complete 3 of 3 lessons (100%)
+      await ProgressService.markLessonProgress('user-1', 'l-3', true);
       const fullProgress = await ProgressService.getCourseProgress('user-1', 'c-1');
-      expect(fullProgress.completedLessons).toBe(2);
+      expect(fullProgress.completedLessons).toBe(3);
       expect(fullProgress.percentage).toBe(100);
     });
 

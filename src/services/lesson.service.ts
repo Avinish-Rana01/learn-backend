@@ -68,6 +68,86 @@ export class LessonService {
       }
     }
 
+    // Query course curriculum hierarchy for canonical navigation & sidebar syllabus
+    const courseModules = await prisma.module.findMany({
+      where: { courseId: lesson.module.course.id },
+      orderBy: { orderIndex: 'asc' },
+      include: {
+        lessons: {
+          orderBy: { orderIndex: 'asc' },
+          select: {
+            id: true,
+            title: true,
+            slug: true,
+            orderIndex: true,
+            isPreview: true,
+            estimatedMinutes: true,
+          },
+        },
+      },
+    });
+
+    const flattenedLessons = courseModules.flatMap((m) =>
+      m.lessons.map((l) => ({
+        id: l.id,
+        title: l.title,
+        slug: l.slug,
+        orderIndex: l.orderIndex,
+        moduleId: m.id,
+        moduleTitle: m.title,
+      }))
+    );
+
+    const currentIndex = flattenedLessons.findIndex((l) => l.id === lesson.id);
+    const previousLesson =
+      currentIndex > 0
+        ? {
+            id: flattenedLessons[currentIndex - 1].id,
+            title: flattenedLessons[currentIndex - 1].title,
+            slug: flattenedLessons[currentIndex - 1].slug,
+            orderIndex: flattenedLessons[currentIndex - 1].orderIndex,
+          }
+        : null;
+
+    const nextLesson =
+      currentIndex >= 0 && currentIndex < flattenedLessons.length - 1
+        ? {
+            id: flattenedLessons[currentIndex + 1].id,
+            title: flattenedLessons[currentIndex + 1].title,
+            slug: flattenedLessons[currentIndex + 1].slug,
+            orderIndex: flattenedLessons[currentIndex + 1].orderIndex,
+          }
+        : null;
+
+    // Check user lesson progress
+    let completedLessonIds = new Set<string>();
+    if (userId) {
+      const userProgress = await prisma.lessonProgress.findMany({
+        where: {
+          userId,
+          lessonId: { in: flattenedLessons.map((l) => l.id) },
+          completed: true,
+        },
+        select: { lessonId: true },
+      });
+      completedLessonIds = new Set(userProgress.map((p) => p.lessonId));
+    }
+
+    const syllabus = courseModules.map((m) => ({
+      id: m.id,
+      title: m.title,
+      orderIndex: m.orderIndex,
+      lessons: m.lessons.map((l) => ({
+        id: l.id,
+        title: l.title,
+        slug: l.slug,
+        orderIndex: l.orderIndex,
+        isPreview: l.isPreview,
+        estimatedMinutes: l.estimatedMinutes,
+        isCompleted: completedLessonIds.has(l.id),
+      })),
+    }));
+
     return {
       id: lesson.id,
       title: lesson.title,
@@ -76,6 +156,7 @@ export class LessonService {
       orderIndex: lesson.orderIndex,
       isPreview: lesson.isPreview,
       estimatedMinutes: lesson.estimatedMinutes,
+      isCompleted: completedLessonIds.has(lesson.id),
       course: {
         id: lesson.module.course.id,
         slug: lesson.module.course.slug,
@@ -87,6 +168,11 @@ export class LessonService {
       },
       contents: lesson.contents,
       quiz: lesson.quiz,
+      navigation: {
+        previousLesson,
+        nextLesson,
+      },
+      syllabus,
     };
   }
 }
